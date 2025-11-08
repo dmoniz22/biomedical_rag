@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: biomed_rag
+      POSTGRES_USER: biomed_user
+      POSTGRES_PASSWORD: biomed_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biomed_user -d biomed_rag"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main application
+  biomed_rag_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://biomed_user:biomed_password@postgres:5432/biomed_rag
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=true
+      - ENVIRONMENT=development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - .:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Background worker for bulk ingestion
+  biomed_rag_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "celery", "-A", "app.core.celery", "worker", "--loglevel=info"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://biomed_user:biomed_password@postgres:5432/biomed_rag
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - .:/app
+    restart: unless-stopped
+
+  # Flower monitoring for Celery
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "celery", "-A", "app.core.celery", "flower", "--port=5555"]
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: biomed_rag_network

@@ -1,0 +1,270 @@
+"""
+Pydantic models for API requests and responses
+"""
+
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+
+class PaperStatus(str, Enum):
+    """Paper processing status"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
+class JobStatus(str, Enum):
+    """Ingestion job status"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PAUSED = "paused"
+
+
+class SearchType(str, Enum):
+    """Search query types"""
+    NATURAL_LANGUAGE = "natural_language"
+    KEYWORD = "keyword"
+    MESH_TERM = "mesh_term"
+
+
+# Paper-related models
+class PaperBase(BaseModel):
+    """Base paper model"""
+    title: str = Field(..., description="Paper title")
+    abstract: Optional[str] = Field(None, description="Paper abstract")
+    journal: Optional[str] = Field(None, description="Journal name")
+    publication_date: Optional[datetime] = Field(None, description="Publication date")
+    doi: Optional[str] = Field(None, description="Digital Object Identifier")
+    keywords: List[str] = Field(default_factory=list, description="Keywords")
+    mesh_terms: List[str] = Field(default_factory=list, description="MeSH terms")
+    subject_areas: List[str] = Field(default_factory=list, description="Subject areas")
+    source_database: str = Field(..., description="Source database")
+
+
+class PaperCreate(PaperBase):
+    """Model for creating a new paper"""
+    pmid: Optional[str] = Field(None, description="PubMed ID")
+    full_text: Optional[str] = Field(None, description="Full text content")
+    publication_type: Optional[str] = Field(None, description="Publication type")
+
+
+class PaperUpdate(BaseModel):
+    """Model for updating a paper"""
+    title: Optional[str] = None
+    abstract: Optional[str] = None
+    full_text: Optional[str] = None
+    quality_score: Optional[float] = None
+    processing_status: Optional[PaperStatus] = None
+    validation_status: Optional[str] = None
+
+
+class Paper(PaperBase):
+    """Complete paper model"""
+    id: str
+    pmid: Optional[str]
+    full_text: Optional[str]
+    publication_type: Optional[str]
+    quality_score: float
+    validation_status: str
+    processing_status: PaperStatus
+    embedding_generated: bool
+    full_text_extracted: bool
+    ingestion_date: datetime
+    last_updated: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class PaperWithAuthors(Paper):
+    """Paper model with author information"""
+    authors: List['Author'] = Field(default_factory=list)
+
+
+# Author-related models
+class AuthorBase(BaseModel):
+    """Base author model"""
+    first_name: Optional[str] = None
+    last_name: str = Field(..., description="Last name")
+    middle_initial: Optional[str] = None
+    affiliation: Optional[str] = None
+    email: Optional[str] = None
+    orcid: Optional[str] = None
+
+
+class Author(AuthorBase):
+    """Complete author model"""
+    id: str
+    validated: bool
+    
+    class Config:
+        from_attributes = True
+
+
+# Search-related models
+class SearchFilters(BaseModel):
+    """Search filter parameters"""
+    subject_area: Optional[str] = None
+    date_range_start: Optional[datetime] = None
+    date_range_end: Optional[datetime] = None
+    min_quality_score: Optional[float] = None
+    journal: Optional[str] = None
+    mesh_terms: List[str] = Field(default_factory=list)
+
+
+class SearchRequest(BaseModel):
+    """Search request model"""
+    query: str = Field(..., description="Search query")
+    search_type: SearchType = SearchType.NATURAL_LANGUAGE
+    max_results: int = Field(10, ge=1, le=100, description="Maximum number of results")
+    filters: Optional[SearchFilters] = None
+    min_confidence_score: Optional[float] = Field(0.7, ge=0.0, le=1.0)
+
+
+class SearchResult(BaseModel):
+    """Individual search result"""
+    paper: Paper
+    relevance_score: float = Field(..., ge=0.0, le=1.0)
+    highlight: Optional[str] = None
+
+
+class SearchResponse(BaseModel):
+    """Search response model"""
+    query: str
+    results: List[SearchResult]
+    total_results: int
+    execution_time_ms: int
+    query_type: SearchType
+
+
+# Ingestion job models
+class IngestionJobBase(BaseModel):
+    """Base ingestion job model"""
+    job_name: str = Field(..., description="Job name")
+    job_type: str = Field(..., description="Job type")
+    source: str = Field(..., description="Data source")
+    target_subject_areas: List[str] = Field(default_factory=list, description="Target subject areas")
+
+
+class IngestionJobCreate(IngestionJobBase):
+    """Model for creating ingestion job"""
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class IngestionJobUpdate(BaseModel):
+    """Model for updating ingestion job"""
+    status: Optional[JobStatus] = None
+    progress_percentage: Optional[float] = None
+    processed_documents: Optional[int] = None
+    errors: Optional[List[str]] = None
+
+
+class IngestionJob(IngestionJobBase):
+    """Complete ingestion job model"""
+    id: str
+    status: JobStatus
+    progress_percentage: float
+    total_documents: int
+    processed_documents: int
+    successful_documents: int
+    failed_documents: int
+    duplicate_documents: int
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
+# Bulk ingestion models
+class BulkIngestionRequest(BaseModel):
+    """Bulk ingestion request model"""
+    source_database: str = Field(..., description="Source database")
+    subject_areas: List[str] = Field(..., description="Subject areas to ingest")
+    max_documents: Optional[int] = Field(None, description="Maximum documents to ingest")
+    date_range_start: Optional[datetime] = None
+    date_range_end: Optional[datetime] = None
+    include_full_text: bool = Field(True, description="Include full text extraction")
+    quality_threshold: float = Field(0.7, ge=0.0, le=1.0, description="Minimum quality score")
+
+
+class BulkIngestionStatus(BaseModel):
+    """Bulk ingestion status response"""
+    job_id: str
+    status: JobStatus
+    progress_percentage: float
+    total_documents: int
+    processed_documents: int
+    successful_documents: int
+    failed_documents: int
+    estimated_completion: Optional[datetime] = None
+    current_phase: str = ""
+    errors: List[str] = Field(default_factory=list)
+
+
+# Subject area models
+class SubjectAreaBase(BaseModel):
+    """Base subject area model"""
+    name: str = Field(..., description="Subject area name")
+    display_name: str = Field(..., description="Display name")
+    description: Optional[str] = None
+    mesh_keywords: List[str] = Field(default_factory=list, description="MeSH keywords")
+    keyword_patterns: List[str] = Field(default_factory=list, description="Keyword patterns")
+
+
+class SubjectAreaCreate(SubjectAreaBase):
+    """Model for creating subject area"""
+    parent_area: Optional[str] = None
+    priority: int = Field(0, description="Priority for classification")
+
+
+class SubjectArea(SubjectAreaBase):
+    """Complete subject area model"""
+    id: str
+    parent_area: Optional[str]
+    is_active: bool
+    priority: int
+    paper_count: int
+    last_updated: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+# API response models
+class APIResponse(BaseModel):
+    """Base API response model"""
+    success: bool
+    message: str
+    data: Optional[Any] = None
+
+
+class PaginatedResponse(BaseModel):
+    """Paginated response model"""
+    items: List[Any]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+# Statistics models
+class DatabaseStats(BaseModel):
+    """Database statistics"""
+    total_papers: int
+    papers_with_embeddings: int
+    total_authors: int
+    total_subject_areas: int
+    pending_ingestion_jobs: int
+    failed_papers: int
+    average_quality_score: float
+
+
+# Update forward references
+PaperWithAuthors.model_rebuild()
